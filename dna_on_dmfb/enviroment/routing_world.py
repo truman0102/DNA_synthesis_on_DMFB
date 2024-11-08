@@ -629,7 +629,7 @@ class RoutingDMFB(gym.Env):
                             next_area[1] : next_area[3] + 1,
                         ]
                     )
-                ]
+                ] + [self.flux[droplet_name]]
             )  # flux of other droplets in the next area with different class
             r -= np.tanh(f / self.max_activation + 0.2)
 

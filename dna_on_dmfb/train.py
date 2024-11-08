@@ -26,15 +26,18 @@ EPS_END = 0.1
 EPS_DECAY = 10000
 TARGET_UPDATE = 2
 MAX_EPISODES = 500
-MAX_STEPS = 10000
-memory = ReplayMemory(10000)
+MAX_STEPS = 15000
+CAPACITY = 20000
+memory = ReplayMemory(CAPACITY)
 
 
-def epsilon_greedy_action(model, state, epsilon, valid_actions):
+def epsilon_greedy_action(model, state, epsilon, valid_actions, num_actions=5):
     if random.random() < epsilon:
-        # 随机选择一个有效动作
-        # action = random.choice(list(range(num_actions)))
-        action = random.choice(valid_actions)
+        if random.random() < 0.5:
+            # 随机选择一个有效动作
+            action = random.choice(valid_actions)
+        else:
+            action = random.choice(list(range(num_actions)))
     else:
         with torch.no_grad():
             q_values = model(state)
