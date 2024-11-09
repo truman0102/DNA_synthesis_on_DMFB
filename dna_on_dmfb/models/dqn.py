@@ -1,72 +1,53 @@
 import torch
 import torch.nn as nn
-
-import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
 
 class DQN(nn.Module):
-    def __init__(self):
+    def __init__(self, input_channels=10, num_actions=5):
         super(DQN, self).__init__()
-        # 卷积层序列
-        self.conv_layers = nn.Sequential(
-            # 卷积层1: kernel_size=1
-            nn.Conv2d(in_channels=10, out_channels=32, kernel_size=1, stride=1, padding=0),
-            nn.BatchNorm2d(32),
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(input_channels, 32, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            
-            # 卷积层2: kernel_size=1
-            nn.Conv2d(32, 64, kernel_size=1, stride=1, padding=0),
-            nn.BatchNorm2d(64),
+            nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            
-            # 卷积层3: kernel_size=1
-            nn.Conv2d(64, 128, kernel_size=1, stride=1, padding=0),
-            nn.BatchNorm2d(128),
+            nn.MaxPool2d(kernel_size=2, stride=1),
+        )
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            
-            # 池化层1
+            nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=1),
+        )
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(256, 512, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=2, stride=1),
+            nn.Conv2d(512, 1024, kernel_size=3, stride=1, padding=1),
+            nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
-            
-            # 卷积层4: kernel_size=3
-            nn.Conv2d(128, 256, kernel_size=1, stride=1, padding=1),
-            nn.BatchNorm2d(256),
-            nn.ReLU(),
-            
-            # 卷积层5: kernel_size=3
-            nn.Conv2d(256, 512, kernel_size=1, stride=1, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(),
-            
-            # 卷积层6: kernel_size=3
-            nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(),
-            
-            # 卷积层7: kernel_size=3
-            nn.Conv2d(512, 512, kernel_size=3, stride=1, padding=1),
-            nn.BatchNorm2d(512),
-            nn.ReLU(),
-            
-            # 池化层2
-            nn.MaxPool2d(kernel_size=2, stride=2)
         )
-
-        # 全连接层序列
-        self.fc_layers = nn.Sequential(
-            nn.Linear(512 * 5 * 5, 1024),
+        self.fc = nn.Sequential(
+            nn.Linear(1024 * 6 * 6, 4096),
             nn.ReLU(),
-            nn.Linear(1024, 256),
-            nn.ReLU(),
-            nn.Linear(256, 5)  # 输出5个动作的Q值
+            nn.Linear(4096, 512),
+            nn.Sigmoid(),
         )
+        self.value_stream = nn.Linear(512, 1)
+        self.advantage_stream = nn.Linear(512, num_actions)
 
     def forward(self, x):
-        x = self.conv_layers(x)
+        x = self.conv1(x)
+        x = self.conv2(x)
+        x = self.conv3(x)
         x = x.view(x.size(0), -1)
-        x = self.fc_layers(x)
-        return x
+        x = self.fc(x)
+        values = self.value_stream(x)
+        advantages = self.advantage_stream(x)
+        qvals = values + (advantages - advantages.mean())
+        return qvals
+
 
 if __name__ == "__main__":
     net = DQN()

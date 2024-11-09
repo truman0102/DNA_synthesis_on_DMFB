@@ -14,7 +14,6 @@ from typing import List, Tuple, Union
 from dna_on_dmfb.enviroment.constants import (
     ACTIONS,
     COLORS,
-    MAX_STEPS,
     MOVEMENTS_2D,
     MOVEMENTS_4D,
     N_ACTIONS,
@@ -47,11 +46,13 @@ class RoutingDMFB(gym.Env):
         show_layout: bool = False,
         visualization: bool = False,
         cross: bool = True,
+        max_steps: int = None,
     ):
         super().__init__()
         self.actions = ACTIONS
         self.action_space = gym.spaces.Discrete(N_ACTIONS)
         self.size = process_size(size) if size is not None else process_size(GRID_SIZE)
+        self.max_steps = max_steps
         self.observation_space = gym.spaces.Box(
             low=0, high=1, shape=(0, self.size[0], self.size[1]), dtype=np.uint8
         )
@@ -320,7 +321,7 @@ class RoutingDMFB(gym.Env):
             info["reason"] = "success"
             # TODO: reward when all droplets reach their goals
             reward += REWARDS.SUCCESS
-        if self.steps >= MAX_STEPS:
+        if self.max_steps is not None and self.steps >= self.max_steps:
             terminated = True
             info["reason"] = "steps"
         return next_observation, reward, terminated, truncated, info
@@ -629,7 +630,8 @@ class RoutingDMFB(gym.Env):
                             next_area[1] : next_area[3] + 1,
                         ]
                     )
-                ] + [self.flux[droplet_name]]
+                ]
+                + [self.flux[droplet_name]]
             )  # flux of other droplets in the next area with different class
             r -= np.tanh(f / self.max_activation + 0.2)
 

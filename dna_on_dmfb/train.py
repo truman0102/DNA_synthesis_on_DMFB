@@ -2,6 +2,7 @@ import argparse
 from copy import deepcopy
 from matplotlib import pyplot as plt
 import numpy as np
+import os
 import random
 import time
 import torch
@@ -16,58 +17,37 @@ from dna_on_dmfb.utils.rl import ReplayMemory
 
 import faulthandler
 
-# 在import之后直接添加以下启用代码即可
 faulthandler.enable()
 
-BATCH_SIZE = 128
 GAMMA = 0.99
 EPS_START = 1.0
 EPS_END = 0.1
 EPS_DECAY = 10000
-TARGET_UPDATE = 2
-MAX_EPISODES = 500
-MAX_STEPS = 15000
-CAPACITY = 20000
-memory = ReplayMemory(CAPACITY)
-
-
-def epsilon_greedy_action(model, state, epsilon, valid_actions, num_actions=5):
-    if random.random() < epsilon:
-        if random.random() < 0.5:
-            # 随机选择一个有效动作
-            action = random.choice(valid_actions)
-        else:
-            action = random.choice(list(range(num_actions)))
-    else:
-        with torch.no_grad():
-            q_values = model(state)
-            q_values = q_values.squeeze()
-            # 只从有效动作中选择Q值最大的动作
-            action = q_values.argmax().item()
-    return action
 
 
 def train(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     env = RoutingDMFB()
+    memory = ReplayMemory(args.capacity)
     n_actions = env.action_space.n
     policy = DQN().to(device)
     target = deepcopy(policy)
-    optimizer = optim.Adam(policy.parameters())
+    optimizer = optim.Adam(policy.parameters(), lr=args.lr)
     criterion = nn.MSELoss()
-
+    # optimizer_contrastive = optim.Adam(policy.parameters())
     steps_done = 0
     l_losses = []
     l_rewards = []
     l_steps = []
     results = {}
-    for episode in trange(1, MAX_EPISODES + 1, desc="Episodes", leave=True):
+    for episode in trange(1, args.max_episodes + 1, desc="Episodes", leave=True):
         # for episode in range(1, MAX_EPISODES + 1):
         env.reset()
         # print(f"Episode {episode}")
         losses_episode = []
         rewards_episode = []
-        for t in trange(1, MAX_STEPS + 1, desc="Steps", leave=False):
+        for t in trange(1, args.max_steps + 1, desc="Steps", leave=False):
+            step_loss = torch.tensor(0.0).to(device)
             # for t in range(1, MAX_STEPS + 1):
             epsilon = EPS_END + (EPS_START - EPS_END) * np.exp(
                 -1.0 * steps_done / EPS_DECAY
@@ -75,26 +55,56 @@ def train(args):
             steps_done += 1
             droplet_name, obs = env.select()
             valid_actions = env.valid_actions(droplet_name)
-            # obs = torch.tensor(obs, dtype=torch.float32).unsqueeze(0)
-            action = epsilon_greedy_action(
-                policy,
-                torch.from_numpy(obs).float().unsqueeze(0).to(device),
-                epsilon,
-                valid_actions,
-            )
+            if len(valid_actions) == 0 or random.random() < epsilon:
+                # 随机选择一个有效动作
+                action = random.choice(valid_actions)
+            else:
+                q_values = policy(torch.from_numpy(obs).float().unsqueeze(0).to(device))
+                # 正负样本InfoNCE Loss & 选择valid_actions中的最大值
+                q_values = q_values.squeeze()
+                if args.select_action == "max":
+                    action = q_values.clone().detach().argmax().item()
+                elif args.select_action == "valid":
+                    q_values_for_action = q_values.clone().detach()
+                    q_values_for_action[
+                        [i for i in range(n_actions) if i not in valid_actions]
+                    ] = -np.inf
+                    action = q_values_for_action.argmax().item()
+                else:
+                    raise ValueError("Invalid select action method")
+                # print(
+                #     f"select action: {action} from {q_values.tolist()} with valid_actions: {valid_actions}"
+                # )
+                if len(valid_actions) < n_actions:
+                    positive_values = q_values[valid_actions]
+                    negative_values = q_values[
+                        [i for i in range(n_actions) if i not in valid_actions]
+                    ]
+                    contrastive_loss = -torch.log(
+                        torch.exp(positive_values).sum()
+                        / (
+                            torch.exp(positive_values).sum()
+                            + torch.exp(negative_values).sum()
+                        )
+                    )
+                    # optimizer_contrastive.zero_grad()
+                    # contrastive_loss.backward()
+                    # optimizer_contrastive.step()
+
+                    step_loss += contrastive_loss
             next_obs, reward, terminated, truncated, info = env.step(
                 droplet_name, action
             )
-            # next_obs = torch.tensor(next_obs, dtype=torch.float32).unsqueeze(0)
             rewards_episode.append(reward)
-            # reward = torch.tensor([reward], device=device)
             done = terminated or truncated
             memory.push(obs, action, reward, next_obs, done)
             # 优化模型
 
-            if len(memory) < BATCH_SIZE:
+            if len(memory) < args.batch_size:
                 continue
-            states, actions, rewards, next_states, dones = memory.sample(BATCH_SIZE)
+            states, actions, rewards, next_states, dones = memory.sample(
+                args.batch_size
+            )
             states = torch.tensor(states, dtype=torch.float32).to(device)
             actions = torch.tensor(actions, dtype=torch.long).to(device)
             rewards = torch.tensor(rewards, dtype=torch.float32).to(device)
@@ -107,11 +117,15 @@ def train(args):
             next_q_value = next_q_values.max(1)[0]
             expected_q_value = rewards + GAMMA * next_q_value * (1 - dones)
             loss = criterion(q_value, expected_q_value.detach())
+            # optimizer.zero_grad()
+            # loss.backward()
+            # optimizer.step()
+            step_loss += loss
             optimizer.zero_grad()
-            loss.backward()
+            step_loss.backward()
             optimizer.step()
 
-            losses_episode.append(loss.item())
+            losses_episode.append(step_loss.item())
 
             if terminated or truncated:
                 if terminated and info["reason"].__eq__("success"):
@@ -139,7 +153,7 @@ def train(args):
                         "success": False,
                     }
                 break
-        if episode % TARGET_UPDATE == 0:
+        if episode % args.target_update == 0:
             target.load_state_dict(policy.state_dict())
         l_losses.append(np.mean(losses_episode))
         l_rewards.append(np.mean(rewards_episode))
@@ -147,6 +161,7 @@ def train(args):
     success = len([1 for episode, result in results.items() if result["success"]])
     print(f"Training done with {success/len(results)*100}% success rate")
 
+    os.makedirs("figures", exist_ok=True)
     # 绘制训练过程中的步数、损失和奖励
     plt.figure(figsize=(12, 6))
     plt.subplot(131)
@@ -159,21 +174,26 @@ def train(args):
     plt.plot(l_steps)
     plt.title("Steps")
     plt.savefig(
-        f"figures/{MAX_EPISODES}_{MAX_STEPS}_{BATCH_SIZE}_{time.strftime('%Y%m%d%H%M%S')}.png",
+        f"figures/{args.select_action}_loss_reward_steps_{args.max_episodes}_{args.max_steps}_{args.target_update}_{args.lr}.png",
         dpi=300,
         bbox_inches="tight",
     )
 
 
-def optimize_model():
-    if len(memory) < BATCH_SIZE:
-        return
-    transitions = memory.sample(BATCH_SIZE)
-
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--batch_size", type=int, default=64)
-
+    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--max_episodes", type=int, default=100)
+    parser.add_argument("--max_steps", type=int, default=15000)
+    parser.add_argument("--capacity", type=int, default=20000)
+    parser.add_argument("--gamma", type=float, default=0.99)
+    parser.add_argument("--eps_start", type=float, default=1.0)
+    parser.add_argument("--eps_end", type=float, default=0.1)
+    parser.add_argument("--eps_decay", type=int, default=10000)
+    parser.add_argument("--target_update", type=int, default=2)
+    parser.add_argument("--lr", type=float, default=0.001)
+    parser.add_argument(
+        "--select_action", type=str, default="max", choices=["max", "valid"]
+    )
     args = parser.parse_args()
     train(args)
