@@ -33,6 +33,9 @@ def train(args):
     policy = DQN().to(device)
     target = deepcopy(policy)
     optimizer = optim.Adam(policy.parameters(), lr=args.lr)
+    scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(
+        optimizer, T_0=10, T_mult=2
+    )
     criterion = nn.MSELoss()
     # optimizer_contrastive = optim.Adam(policy.parameters())
     steps_done = 0
@@ -60,7 +63,6 @@ def train(args):
                 action = random.choice(valid_actions)
             else:
                 q_values = policy(torch.from_numpy(obs).float().unsqueeze(0).to(device))
-                # 正负样本InfoNCE Loss & 选择valid_actions中的最大值
                 q_values = q_values.squeeze()
                 if args.select_action == "max":
                     action = q_values.clone().detach().argmax().item()
@@ -158,11 +160,13 @@ def train(args):
         l_losses.append(np.mean(losses_episode))
         l_rewards.append(np.mean(rewards_episode))
         l_steps.append(t)
+        scheduler.step()
+
     success = len([1 for episode, result in results.items() if result["success"]])
     print(f"Training done with {success/len(results)*100}% success rate")
 
     os.makedirs("figures", exist_ok=True)
-    # 绘制训练过程中的步数、损失和奖励
+
     plt.figure(figsize=(12, 6))
     plt.subplot(131)
     plt.plot(l_losses)
@@ -183,7 +187,7 @@ def train(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", type=int, default=128)
-    parser.add_argument("--max_episodes", type=int, default=100)
+    parser.add_argument("--max_episodes", type=int, default=500)
     parser.add_argument("--max_steps", type=int, default=15000)
     parser.add_argument("--capacity", type=int, default=20000)
     parser.add_argument("--gamma", type=float, default=0.99)
