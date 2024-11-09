@@ -43,6 +43,12 @@ def train(args):
     l_rewards = []
     l_steps = []
     results = {}
+    name = f"{args.select_action}_loss_reward_steps_lr_{args.max_episodes}_{args.max_steps}_{args.target_update}_{args.lr}"
+    time_str = time.strftime("%Y%m%d%H%M%S")
+    vis_path = os.path.join("figures/", name, time_str)
+    os.makedirs(vis_path, exist_ok=True)
+    ckpt_path = os.path.join("checkpoints/", name, time_str)
+    os.makedirs(ckpt_path, exist_ok=True)
     for episode in trange(1, args.max_episodes + 1, desc="Episodes", leave=True):
         # for episode in range(1, MAX_EPISODES + 1):
         env.reset()
@@ -63,6 +69,7 @@ def train(args):
                 action = random.choice(valid_actions)
             else:
                 q_values = policy(torch.from_numpy(obs).float().unsqueeze(0).to(device))
+                # 正负样本InfoNCE Loss & 选择valid_actions中的最大值
                 q_values = q_values.squeeze()
                 if args.select_action == "max":
                     action = q_values.clone().detach().argmax().item()
@@ -128,7 +135,6 @@ def train(args):
             optimizer.step()
 
             losses_episode.append(step_loss.item())
-
             if terminated or truncated:
                 if terminated and info["reason"].__eq__("success"):
                     print(f"Success in {t} steps")
@@ -155,18 +161,31 @@ def train(args):
                         "success": False,
                     }
                 break
+            if t == args.max_steps:
+                print("Steps limit reached")
+                results[episode] = {
+                    "steps": t,
+                    "reward": np.mean(rewards_episode),
+                    "loss": np.mean(losses_episode),
+                    "success": False,
+                }
         if episode % args.target_update == 0:
             target.load_state_dict(policy.state_dict())
         l_losses.append(np.mean(losses_episode))
         l_rewards.append(np.mean(rewards_episode))
         l_steps.append(t)
         scheduler.step()
-
+        env.save_figure(os.path.join(vis_path, f"{episode}.png"))
+    print(f"Training done with {len(results)} episodes")
     success = len([1 for episode, result in results.items() if result["success"]])
     print(f"Training done with {success/len(results)*100}% success rate")
 
-    os.makedirs("figures", exist_ok=True)
-
+    # 保存模型
+    torch.save(
+        policy.state_dict(),
+        os.path.join(ckpt_path, "policy.pth"),
+    )
+    # 绘制训练过程中的步数、损失和奖励
     plt.figure(figsize=(12, 6))
     plt.subplot(131)
     plt.plot(l_losses)
@@ -178,7 +197,7 @@ def train(args):
     plt.plot(l_steps)
     plt.title("Steps")
     plt.savefig(
-        f"figures/{args.select_action}_loss_reward_steps_{args.max_episodes}_{args.max_steps}_{args.target_update}_{args.lr}.png",
+        os.path.join(vis_path, "training.png"),
         dpi=300,
         bbox_inches="tight",
     )
@@ -187,7 +206,7 @@ def train(args):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--batch_size", type=int, default=128)
-    parser.add_argument("--max_episodes", type=int, default=500)
+    parser.add_argument("--max_episodes", type=int, default=20)
     parser.add_argument("--max_steps", type=int, default=15000)
     parser.add_argument("--capacity", type=int, default=20000)
     parser.add_argument("--gamma", type=float, default=0.99)
@@ -197,7 +216,7 @@ if __name__ == "__main__":
     parser.add_argument("--target_update", type=int, default=2)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument(
-        "--select_action", type=str, default="max", choices=["max", "valid"]
+        "--select_action", type=str, default="valid", choices=["max", "valid"]
     )
     args = parser.parse_args()
     train(args)

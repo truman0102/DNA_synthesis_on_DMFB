@@ -334,6 +334,11 @@ class RoutingDMFB(gym.Env):
         plt.show()
         plt.close()
 
+    def save_figure(self, path_to_name):
+        self.render()
+        plt.savefig(path_to_name, bbox_inches="tight", dpi=300)
+        plt.close()
+
     @gif.frame
     def plot(self):
         self.render()
@@ -341,9 +346,9 @@ class RoutingDMFB(gym.Env):
     def select(self):
         # TODO
         prob = np.random.uniform()
-        if prob < 0.1:
+        if prob < 0.3:
             name = random.choice(list(self.droplets_to_move))
-        elif prob < 0.5:
+        elif prob < 0.7:
             # 选择距离最近的droplet
             name = min(self.droplets_to_move, key=lambda x: self.distances[x])
         else:
