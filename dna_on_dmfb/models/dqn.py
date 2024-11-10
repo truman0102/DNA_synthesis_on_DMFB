@@ -23,15 +23,10 @@ class DQN(nn.Module):
         self.conv3 = nn.Sequential(
             nn.Conv2d(256, 512, kernel_size=3, stride=1, padding=1),
             nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=1),
-            nn.Conv2d(512, 1024, kernel_size=3, stride=1, padding=1),
-            nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
         )
         self.fc = nn.Sequential(
-            nn.Linear(1024 * 6 * 6, 4096),
-            nn.ReLU(),
-            nn.Linear(4096, 512),
+            nn.Linear(512 * 6 * 6, 512),
             nn.Sigmoid(),
         )
         self.value_stream = nn.Linear(512, 1)

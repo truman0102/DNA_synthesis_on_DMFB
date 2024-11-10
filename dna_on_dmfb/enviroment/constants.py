@@ -39,7 +39,7 @@ class REWARDS:
         elif new_distance == original_distance: # same distance
             return -.1
         else: # further from target
-            return -.3
+            return -.4
 
 MOVEMENTS_2D = np.array(
     [

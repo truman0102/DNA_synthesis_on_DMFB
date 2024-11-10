@@ -42,10 +42,6 @@ class RoutingDMFB(gym.Env):
         self,
         size: Union[int, Tuple[int, int], List[int], np.ndarray] = None,
         obs_size: Union[int, Tuple[int, int], List[int], np.ndarray] = None,
-        situation: dict = None,
-        show_layout: bool = False,
-        visualization: bool = False,
-        cross: bool = True,
         max_steps: int = None,
     ):
         super().__init__()
@@ -61,10 +57,9 @@ class RoutingDMFB(gym.Env):
             if obs_size is not None
             else process_size(OBSERVATION_SIZE)
         )
-        # self.reset(show_layout=show_layout, visualization=visualization, cross=cross)
 
     def reset(
-        self, show_layout: bool = False, visualization: bool = False, cross: bool = True
+        self, products:dict=None, show_layout: bool = False, visualization: bool = False, zone_locations: dict = None
     ):
         def _center_to_region(center, w):
             if w % 2 == 0:
@@ -85,10 +80,16 @@ class RoutingDMFB(gym.Env):
             return 3 + 2 * (height - level)
 
         self.situation = deepcopy(situation)
-        self.situation["products"] = create_dna_mutation_tree()
+        self.situation["products"] = create_dna_mutation_tree(
+            sequence_length=random.randint(10, 20),
+            max_tree_height=random.randint(2, 4),
+            max_total_nodes=random.randint(5, 10),
+            max_children_per_node=random.randint(2, 3),
+        ) if products is None else products
+        if zone_locations is not None:
+            self.situation["zone_locations"] = zone_locations
         pprint(self.situation["products"])
         self.show_layout = show_layout
-        self.cross = cross
         self.visualization = visualization
         self.frames = [] if visualization else None
         # layout for entrances and zones
@@ -96,7 +97,7 @@ class RoutingDMFB(gym.Env):
             ((self.situation, (11, 11, 118, 118), i), {}) for i in range(23, 4, -2)
         ]
         try:
-            self.graph, self.init_positions, self.zone_parent, height = (
+            graph, self.init_positions, self.zone_parent, height = (
                 try_with_different_params(adjust_layout, params_list, 10)
             )
         except:
@@ -144,7 +145,7 @@ class RoutingDMFB(gym.Env):
                 )  # round to integer
         if show_layout:
             nx.draw(
-                self.graph, pos=self.init_positions, with_labels=False, node_size=100
+                graph, pos=self.init_positions, with_labels=False, node_size=100
             )
             plt.show()
             plt.close()
@@ -212,14 +213,12 @@ class RoutingDMFB(gym.Env):
                 elif entrance.name.__eq__("agarose"):
                     droplet = entrance.sent(deepcopy(zone.location))
                     droplet.name = entrance.name + "_" + zone.name
-                    # self.distances[droplet.name] = distance(droplet.center, zone.center)
                     self.distances[droplet.name] = droplet.distance_to_goal
                     self.flux[droplet.name] = 1
                     self._add_droplet(droplet)
                 elif entrance.name.__eq__("primer") and zone.level == 1:
                     droplet = entrance.sent(deepcopy(zone.location))
                     droplet.name = entrance.name + "_" + zone.name
-                    # self.distances[droplet.name] = distance(droplet.center, zone.center)
                     self.distances[droplet.name] = droplet.distance_to_goal
                     self.flux[droplet.name] = 1
                     self._add_droplet(droplet)
@@ -227,7 +226,6 @@ class RoutingDMFB(gym.Env):
                     droplet = entrance.sent(deepcopy(zone.location))
                     droplet.name = entrance.name + "_" + zone.name
                     self.flux[droplet.name] = len(zone.mutate_prefixs)
-                    # self.distances[droplet.name] = distance(droplet.center, zone.center)
                     self.distances[droplet.name] = droplet.distance_to_goal
                     self._add_droplet(droplet)
             # for zone in self.zones:
@@ -243,7 +241,6 @@ class RoutingDMFB(gym.Env):
                         deepcopy(next_zone.location),
                     )
                     self.flux[droplet.name] = 1
-                    # self.distances[droplet.name] = distance(droplet.center, next_zone.center)
                     self.distances[droplet.name] = droplet.distance_to_goal
                     self._add_droplet(droplet)
         self.droplets_to_move = set(self.droplets_idx.keys())
@@ -254,8 +251,6 @@ class RoutingDMFB(gym.Env):
                     self.classes_idx[self.droplets[droplet_idx].class_name]
                 ]
             )
-        # 添加frontier及其color
-        # TODO:
         self.goals = [zone.location.tolist() for zone in self.zones]
         self.frontiers = []
         for zone in self.zones:
@@ -345,15 +340,23 @@ class RoutingDMFB(gym.Env):
 
     def select(self):
         # TODO
-        prob = np.random.uniform()
-        if prob < 0.3:
-            name = random.choice(list(self.droplets_to_move))
-        elif prob < 0.7:
+        p = np.random.uniform()
+        names = tuple(self.droplets_to_move)
+        if p < 0.5:
+            name = random.choice(names)
+        elif p < 0.7:
             # 选择距离最近的droplet
-            name = min(self.droplets_to_move, key=lambda x: self.distances[x])
+            probs = np.array([self.distances[name] for name in names])
+            # softmax
+            probs = np.exp(probs) / np.sum(np.exp(probs))
+            name = np.random.choice(names, p=probs)
         else:
             # 选择flux最大的droplet
-            name = max(self.droplets_to_move, key=lambda x: self.flux[x])
+            # name = max(self.droplets_to_move, key=lambda x: self.flux[x])
+            probs = np.array([self.flux[name] for name in names])
+            # softmax
+            probs = np.exp(probs) / np.sum(np.exp(probs))
+            name = np.random.choice(names, p=probs)
         obs = self._get_observation(name)
         return name, obs
 
@@ -638,7 +641,7 @@ class RoutingDMFB(gym.Env):
                 ]
                 + [self.flux[droplet_name]]
             )  # flux of other droplets in the next area with different class
-            r -= np.tanh(f / self.max_activation + 0.2)
+            r -= np.tanh(f / self.max_activation)
 
         self.m_activation[
             droplet.x_upper_left : droplet.x_lower_right + 1,
@@ -675,31 +678,13 @@ class RoutingDMFB(gym.Env):
                     zone.x_upper_left : zone.x_lower_right + 1,
                     zone.y_upper_left : zone.y_lower_right + 1,
                 ] = True
-        if not self.cross:
-            m_obstacles[np.any(self.m_droplet_trajectory, axis=0)] = True
         self.m_activation[
             droplet.x_upper_left : droplet.x_lower_right + 1,
             droplet.y_upper_left : droplet.y_lower_right + 1,
         ] += self.flux[droplet.name]
-        # self.droplets[-1].set_color(COLORS.agent_colors[self.classes_idx[droplet.class_name]])
         self.m_droplet_obstacles = np.concatenate(
             (self.m_droplet_obstacles, np.expand_dims(m_obstacles, axis=0)), axis=0
         )
-        if not self.cross:
-            self.m_droplet_obstacles[
-                :-1,
-                droplet.x_upper_left : droplet.x_lower_right + 1,
-                droplet.y_upper_left : droplet.y_lower_right + 1,
-            ] = True
-            self.m_class_obstacles[
-                [
-                    class_name
-                    for class_name, class_idx in self.classes_idx.items()
-                    if class_name.__eq__(droplet.class_name)
-                ],
-                droplet.x_upper_left : droplet.x_lower_right + 1,
-                droplet.y_upper_left : droplet.y_lower_right + 1,
-            ] = True
 
     def valid_actions(self, droplet_name: str):
         droplet_idx = self.droplets_idx[droplet_name]
@@ -729,8 +714,6 @@ class RoutingDMFB(gym.Env):
         m_obstacles = np.zeros((self.height + 2, self.width + 2), dtype=bool)
         m_obstacles[:, [0, -1]] = True
         m_obstacles[[0, -1], :] = True
-        if not self.cross:
-            m_obstacles[np.any(self.m_class_trajectory, axis=0)] = True
         self.m_class_obstacles = np.concatenate(
             (self.m_class_obstacles, np.expand_dims(m_obstacles, axis=0)), axis=0
         )

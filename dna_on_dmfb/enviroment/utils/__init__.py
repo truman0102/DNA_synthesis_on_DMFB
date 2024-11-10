@@ -2,6 +2,12 @@ import numpy as np
 import signal
 import threading
 
+def read_products_from_json(json_file, sequence="1"):
+    import json
+    with open(json_file, 'r') as f:
+        data = json.load(f)
+    products = data[sequence]['products']
+    return products
 
 def process_size(size):
     if isinstance(size, int):

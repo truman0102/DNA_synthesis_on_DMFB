@@ -196,5 +196,9 @@ def adjust_layout(situation: dict, adjust_area, min_distance=5):
         fixed_positions[dNTPs[node_id]] = get_center(entrances_dNTPs[i])
     for i, node_id in enumerate(ddNTP_sort):
         fixed_positions[ddNTPs[node_id]] = get_center(entrances_ddNTPs[i])
+    zone_locations = situation.get("zone_locations", None)
+    if zone_locations is not None:
+        fixed_positions.update(zone_locations)
+        return graph, fixed_positions, zone_parent, height
     pos = simulated_annealing_layout_v2(graph, fixed_positions, adjust_area, min_distance, 1000, 1.0, 0.001, 0.995)
     return graph, pos, zone_parent, height
